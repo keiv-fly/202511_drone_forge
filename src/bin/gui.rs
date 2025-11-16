@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use bevy::render::camera::ScalingMode;
 use bevy::window::PrimaryWindow;
+use bevy::prelude::Camera2d;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use droneforge::*;
 use droneforge::world::World as GameWorld;
@@ -66,12 +66,12 @@ fn main() {
 		.add_plugins(DefaultPlugins.set(WindowPlugin {
 			primary_window: Some(Window {
 				title: "Droneforge GUI (MVP)".to_string(),
-				resolution: (1280.0, 800.0).into(),
+				resolution: (1280, 800).into(),
 				..Default::default()
 			}),
 			..Default::default()
 		}))
-		.add_plugins(EguiPlugin)
+		.add_plugins(EguiPlugin::default())
 		// Resources
 		.insert_resource(UiState {
 			console_input: String::new(),
@@ -100,7 +100,6 @@ fn main() {
 				handle_selection_input,
 				build_tiles_when_needed,
 				update_tile_colors_from_world,
-				draw_ui,
 				tick_engine_when_running,
 				update_toast_timer,
 			),
@@ -110,10 +109,13 @@ fn main() {
 
 // ---------- Setup ----------
 fn setup_camera(mut commands: Commands) {
-	let mut cam = Camera2dBundle::default();
-	// Use fixed pixel grid scaling for crisp tiles
-	cam.projection.scaling_mode = ScalingMode::FixedVertical(800.0);
-	commands.spawn(cam);
+	commands.spawn((
+		Camera::default(),
+		Camera2d,
+		Projection::Orthographic(OrthographicProjection::default_2d()),
+		Transform::default(),
+		GlobalTransform::default(),
+	));
 }
 
 // ---------- Utilities ----------
@@ -134,8 +136,8 @@ fn world_to_tile_coord(p: Vec2) -> (i32, i32) {
 }
 
 fn screen_to_world_2d(camera_q: &Query<(&Camera, &GlobalTransform)>, screen_pos: Vec2) -> Option<Vec2> {
-	let (camera, camera_transform) = camera_q.get_single().ok()?;
-	camera.viewport_to_world_2d(camera_transform, screen_pos)
+	let (camera, camera_transform) = camera_q.single().ok()?;
+	camera.viewport_to_world_2d(camera_transform, screen_pos).ok()
 }
 
 fn set_toast(ui: &mut ResMut<UiState>, msg: impl Into<String>) {
@@ -145,8 +147,6 @@ fn set_toast(ui: &mut ResMut<UiState>, msg: impl Into<String>) {
 // ---------- Systems: Map Rendering ----------
 fn build_tiles_when_needed(
 	mut commands: Commands,
-	mut meshes: ResMut<Assets<Mesh>>,
-	mut materials: ResMut<Assets<ColorMaterial>>,
 	mut ui: ResMut<UiState>,
 	engine: Res<GameEngine>,
 	existing_layers: Query<Entity, With<TilesLayer>>,
@@ -156,55 +156,47 @@ fn build_tiles_when_needed(
 	}
 	// Clear previous tile layer
 	for e in &existing_layers {
-		commands.entity(e).despawn_recursive();
+		commands.entity(e).despawn();
 	}
 	// Build current z layer tiles
 	let z = ui.current_z;
-	let parent = commands.spawn((SpatialBundle::default(), TilesLayer)).id();
 	for y in 0..engine.engine.world.height() {
 		for x in 0..engine.engine.world.width() {
 			let k = engine.engine.world.get_tile(TileCoord3 { x, y, z }).unwrap_or(TileKind::Air);
 			let color = tile_color_for_kind(k);
-			let mesh = meshes.add(bevy::math::primitives::Rectangle::new(TILE_SIZE, TILE_SIZE));
-			let material = materials.add(ColorMaterial::from(color));
 			let pos = Vec3::new(
 				x as f32 * TILE_SIZE + TILE_SIZE * 0.5,
 				y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
 				0.0,
 			);
-			let id = commands
-				.spawn((
-					bevy::sprite::MaterialMesh2dBundle {
-						mesh: bevy::sprite::Mesh2dHandle::from(mesh),
-						material,
-						transform: Transform::from_translation(pos),
-						..Default::default()
-					},
-					TilePos { x, y, z },
-				))
-				.id();
-			commands.entity(parent).add_child(id);
+			let _id = commands.spawn((
+				Sprite {
+					color,
+					custom_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+					..Default::default()
+				},
+				Transform::from_translation(pos),
+				GlobalTransform::default(),
+				TilePos { x, y, z },
+				TilesLayer,
+			)).id();
 		}
 	}
 	// Done
-	commands.entity(parent).insert(TilesLayer);
 	ui.request_rebuild_tiles = false;
 }
 
 fn update_tile_colors_from_world(
 	engine: Res<GameEngine>,
-	mut q: Query<(&TilePos, &mut Handle<ColorMaterial>)>,
-	mut materials: ResMut<Assets<ColorMaterial>>,
+	mut q: Query<(&TilePos, &mut Sprite)>,
 ) {
 	if !engine.is_changed() {
 		// We still refresh, but this early return could be enabled if we track diffs
 	}
-	for (pos, mut mat_handle) in &mut q {
+	for (pos, mut sprite) in &mut q {
 		if let Some(k) = engine.engine.world.get_tile(TileCoord3 { x: pos.x, y: pos.y, z: pos.z }) {
 			let new_color = tile_color_for_kind(k);
-			if let Some(mat) = materials.get_mut(&*mat_handle) {
-				mat.color = new_color;
-			}
+			sprite.color = new_color;
 		}
 	}
 }
@@ -214,9 +206,9 @@ fn handle_pan_zoom(
 	mut ev_motion: EventReader<bevy::input::mouse::MouseMotion>,
 	mut ev_wheel: EventReader<bevy::input::mouse::MouseWheel>,
 	mouse_buttons: Res<ButtonInput<MouseButton>>,
-	mut q_cam: Query<(&mut OrthographicProjection, &mut Transform), With<Camera>>,
+	mut q_cam: Query<(&mut Projection, &mut Transform), With<Camera>>,
 ) {
-	let (mut proj, mut cam_transform) = if let Ok(v) = q_cam.get_single_mut() { v } else { return };
+	let (mut proj, mut cam_transform) = if let Ok(v) = q_cam.single_mut() { v } else { return };
 
 	if mouse_buttons.pressed(MouseButton::Middle) {
 		let mut delta = Vec2::ZERO;
@@ -233,8 +225,10 @@ fn handle_pan_zoom(
 	for w in ev_wheel.read() {
 		let scroll = w.y;
 		let factor = 1.0 - scroll * 0.1;
-		let new_scale = (proj.scale * factor).clamp(0.2, 10.0);
-		proj.scale = new_scale;
+		if let Projection::Orthographic(ortho) = &mut *proj {
+			let new_scale = (ortho.scale * factor).clamp(0.2, 10.0);
+			ortho.scale = new_scale;
+		}
 	}
 }
 
@@ -243,8 +237,6 @@ fn handle_selection_input(
 	mut commands: Commands,
 	windows: Query<&Window, With<PrimaryWindow>>,
 	q_cam: Query<(&Camera, &GlobalTransform)>,
-	mut meshes: ResMut<Assets<Mesh>>,
-	mut materials: ResMut<Assets<ColorMaterial>>,
 	mouse_buttons: Res<ButtonInput<MouseButton>>,
 	mut selection: ResMut<SelectionState>,
 	ui: Res<UiState>,
@@ -254,13 +246,13 @@ fn handle_selection_input(
 	if ui.current_tool != Tool::MineArea {
 		// Clear overlay if present
 		for e in &mut q_overlay {
-			commands.entity(e).despawn_recursive();
+			commands.entity(e).despawn();
 		}
 		selection.is_dragging = false;
 		return;
 	}
 
-	let window = if let Ok(w) = windows.get_single() { w } else { return };
+	let window = if let Ok(w) = windows.single() { w } else { return };
 	let cursor = if let Some(p) = window.cursor_position() { p } else { return };
 
 	let world_pos = if let Some(wp) = screen_to_world_2d(&q_cam, cursor) { wp } else { return };
@@ -271,7 +263,7 @@ fn handle_selection_input(
 		selection.current_world = world_pos;
 		// Remove existing overlay
 		for e in &mut q_overlay {
-			commands.entity(e).despawn_recursive();
+			commands.entity(e).despawn();
 		}
 	}
 
@@ -284,36 +276,28 @@ fn handle_selection_input(
 
 		// Recreate overlay fresh (simple approach)
 		for e in &mut q_overlay {
-			commands.entity(e).despawn_recursive();
+			commands.entity(e).despawn();
 		}
-		let mesh = meshes.add(bevy::math::primitives::Rectangle::new(size.x.max(1.0), size.y.max(1.0)));
-		let id = commands
-			.spawn((
-				bevy::sprite::MaterialMesh2dBundle {
-					mesh: bevy::sprite::Mesh2dHandle::from(mesh),
-					material: materials.add(ColorMaterial::from(Color::srgba(0.2, 0.6, 1.0, 0.15))),
-					transform: Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
-					..Default::default()
-				},
-				SelectionOverlay,
-			))
-			.id();
-		let border_mesh = meshes.add(bevy::math::primitives::Rectangle::new(size.x.max(1.0), size.y.max(1.0)));
-		let _border = commands
-			.spawn((
-				bevy::sprite::MaterialMesh2dBundle {
-					mesh: bevy::sprite::Mesh2dHandle::from(border_mesh),
-					material: materials.add(ColorMaterial::from(Color::srgba(0.2, 0.6, 1.0, 0.45))),
-					transform: Transform {
-						translation: Vec3::new(center.x, center.y, 11.0),
-						scale: Vec3::new(1.0, 1.0, 1.0),
-						..Default::default()
-					},
-					..Default::default()
-				},
-				SelectionOverlay,
-			))
-			.id();
+		let id = commands.spawn(( 
+			Sprite {
+				color: Color::srgba(0.2, 0.6, 1.0, 0.15),
+				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+				..Default::default()
+			},
+			Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
+			GlobalTransform::default(),
+			SelectionOverlay,
+		)).id();
+		let _border = commands.spawn(( 
+			Sprite {
+				color: Color::srgba(0.2, 0.6, 1.0, 0.45),
+				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+				..Default::default()
+			},
+			Transform::from_translation(Vec3::new(center.x, center.y, 11.0)),
+			GlobalTransform::default(),
+			SelectionOverlay,
+		)).id();
 		let _ = (id, _border);
 	}
 
@@ -345,7 +329,7 @@ fn tick_engine_when_running(mut eng: ResMut<GameEngine>, ui: Res<UiState>) {
 // ---------- Systems: Toast ----------
 fn update_toast_timer(time: Res<Time>, mut ui: ResMut<UiState>) {
 	if let Some((_, ref mut remaining)) = ui.toast {
-		*remaining -= time.delta_seconds();
+		*remaining -= time.delta_secs();
 		if *remaining <= 0.0 {
 			ui.toast = None;
 		}
@@ -361,10 +345,10 @@ fn draw_ui(
 	mut commands: Commands,
 	mut q_overlay: Query<Entity, With<SelectionOverlay>>,
 ) {
-	let ctx = egui_ctx.ctx_mut();
+	if let Ok(ctx) = egui_ctx.ctx_mut() {
 
 	// Top HUD
-	egui::TopBottomPanel::top("top_hud").show(ctx, |ui_top| {
+	egui::TopBottomPanel::top("top_hud").show(&*ctx, |ui_top| {
 		ui_top.horizontal(|ui_row| {
 			let wave_label = "Wave TBD"; // Placeholder
 			let hud_text = format_hud(&eng.engine.world.resources, wave_label);
@@ -395,7 +379,7 @@ fn draw_ui(
 	egui::SidePanel::right("right_panel")
 		.resizable(true)
 		.default_width(280.0)
-		.show(ctx, |ui_right| {
+		.show(&*ctx, |ui_right| {
 			ui_right.heading("Drones");
 			egui::ScrollArea::vertical().show(ui_right, |ui_scroll| {
 				for d in &eng.engine.drones {
@@ -436,7 +420,7 @@ fn draw_ui(
 		});
 
 	// Bottom console
-	egui::TopBottomPanel::bottom("bottom_console").resizable(true).show(ctx, |ui_bottom| {
+	egui::TopBottomPanel::bottom("bottom_console").resizable(true).show(&*ctx, |ui_bottom| {
 		ui_bottom.horizontal(|ui_row| {
 			let edit = egui::TextEdit::singleline(&mut ui.console_input)
 				.hint_text("Describe task… (MVP: uses selected area to create mine_box)");
@@ -480,7 +464,7 @@ fn draw_ui(
 	});
 
 	// Tool strip (top-left over map)
-	egui::Area::new("tool_strip".into()).fixed_pos(egui::pos2(12.0, 80.0)).show(ctx, |ui_area| {
+	egui::Area::new("tool_strip".into()).fixed_pos(egui::pos2(12.0, 80.0)).show(&*ctx, |ui_area| {
 		egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 64)).show(ui_area, |ui_tools| {
 			ui_tools.horizontal(|ui_row| {
 				let sel = ui.current_tool == Tool::Select;
@@ -504,12 +488,14 @@ fn draw_ui(
 					selection.last_box = None;
 					// Remove overlays
 					for e in &mut q_overlay {
-						commands.entity(e).despawn_recursive();
+						commands.entity(e).despawn();
 					}
 				}
 			});
 		});
 	});
+
+	} // end if Ok(ctx)
 }
 
 fn dsl_ast_program_for_mine_box(b: TileBox3) -> Program {
