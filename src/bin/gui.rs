@@ -109,11 +109,13 @@ fn main() {
 
 // ---------- Setup ----------
 fn setup_camera(mut commands: Commands) {
+	let center_x = (WORLD_WIDTH as f32) * TILE_SIZE * 0.5;
+	let center_y = (WORLD_HEIGHT as f32) * TILE_SIZE * 0.5;
 	commands.spawn((
 		Camera::default(),
 		Camera2d,
 		Projection::Orthographic(OrthographicProjection::default_2d()),
-		Transform::default(),
+		Transform::from_translation(Vec3::new(center_x, center_y, 0.0)),
 		GlobalTransform::default(),
 	));
 }
