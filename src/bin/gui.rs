@@ -45,6 +45,7 @@ struct UiState {
 	request_rebuild_tiles: bool,
 	current_tool: Tool,
 	toast: Option<(String, f32)>, // (message, remaining_seconds)
+	core_hp: (u32, u32),
 }
 
 #[derive(Resource, Default)]
@@ -82,6 +83,7 @@ fn main() {
 			request_rebuild_tiles: true,
 			current_tool: Tool::Select,
 			toast: None,
+			core_hp: (100, 100),
 		})
 		.insert_resource(SelectionState::default())
 		.insert_resource(GameEngine {
@@ -353,21 +355,21 @@ fn draw_ui(
 	egui::TopBottomPanel::top("top_hud").show(&*ctx, |ui_top| {
 		ui_top.horizontal(|ui_row| {
 			let wave_label = "Wave TBD"; // Placeholder
-			let hud_text = format_hud(&eng.engine.world.resources, wave_label);
+			let hud_text = format_hud(&eng.engine.world.resources, wave_label, ui.core_hp);
+			let controls = hud_controls(ui.current_z, ui.paused);
 			ui_row.label(hud_text);
 			ui_row.separator();
-			ui_row.label(format!("Z: {}", ui.current_z));
-			if ui_row.button("Z▲").clicked() {
+			ui_row.label(&controls.z_readout);
+			if ui_row.button(controls.z_up_label).clicked() {
 				ui.current_z = (ui.current_z + 1).min(eng.engine.world.levels() - 1);
 				ui.request_rebuild_tiles = true;
 			}
-			if ui_row.button("Z▼").clicked() {
+			if ui_row.button(controls.z_down_label).clicked() {
 				ui.current_z = (ui.current_z - 1).max(0);
 				ui.request_rebuild_tiles = true;
 			}
 			ui_row.separator();
-			let pause_label = if ui.paused { "Resume" } else { "Pause" };
-			if ui_row.button(pause_label).clicked() {
+			if ui_row.button(&controls.pause_label).clicked() {
 				ui.paused = !ui.paused;
 			}
 			if let Some((ref msg, _)) = ui.toast {
@@ -382,7 +384,7 @@ fn draw_ui(
 		.resizable(true)
 		.default_width(280.0)
 		.show(&*ctx, |ui_right| {
-			ui_right.heading("Drones");
+			ui_right.heading(DRONE_PANEL_HEADING);
 			egui::ScrollArea::vertical().show(ui_right, |ui_scroll| {
 				for d in &eng.engine.drones {
 					let status = match d.status {
@@ -402,7 +404,7 @@ fn draw_ui(
 				}
 			});
 			ui_right.separator();
-			ui_right.heading("Tasks");
+			ui_right.heading(TASK_PANEL_HEADING);
 			egui::ScrollArea::vertical().show(ui_right, |ui_scroll| {
 				for (t, s) in &eng.engine.tasks.tasks {
 					let state = match s {
@@ -425,13 +427,13 @@ fn draw_ui(
 	egui::TopBottomPanel::bottom("bottom_console").resizable(true).show(&*ctx, |ui_bottom| {
 		ui_bottom.horizontal(|ui_row| {
 			let edit = egui::TextEdit::singleline(&mut ui.console_input)
-				.hint_text("Describe task… (MVP: uses selected area to create mine_box)");
+				.hint_text(CONSOLE_HINT);
 			let mut response = ui_row.add(edit);
 			if ui.focus_console {
 				response.request_focus();
 				ui.focus_console = false;
 			}
-			let submit_clicked = ui_row.button("Submit").clicked();
+			let submit_clicked = ui_row.button(CONSOLE_SUBMIT_LABEL).clicked();
 			let enter_pressed = response.lost_focus() && response.ctx.input(|i| i.key_pressed(egui::Key::Enter));
 			if submit_clicked || enter_pressed {
 				let entered = ui.console_input.trim().to_string();
@@ -470,21 +472,21 @@ fn draw_ui(
 		egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 64)).show(ui_area, |ui_tools| {
 			ui_tools.horizontal(|ui_row| {
 				let sel = ui.current_tool == Tool::Select;
-				if ui_row.selectable_label(sel, "Select").clicked() {
+				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[0]).clicked() {
 					ui.current_tool = Tool::Select;
 				}
 				let sel = ui.current_tool == Tool::MineArea;
-				if ui_row.selectable_label(sel, "Mine Area").clicked() {
+				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[1]).clicked() {
 					ui.current_tool = Tool::MineArea;
 					// Prompt flow: area drag first, then console
 					ui.focus_console = false;
 				}
 				let sel = ui.current_tool == Tool::BuildWarrior;
-				if ui_row.selectable_label(sel, "Build Warrior").clicked() {
+				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[2]).clicked() {
 					ui.current_tool = Tool::BuildWarrior;
 					set_toast(&mut ui, "Build Warrior not implemented in M1");
 				}
-				if ui_row.button("Cancel").clicked() {
+				if ui_row.button(TOOL_STRIP_LABELS[3]).clicked() {
 					ui.current_tool = Tool::Select;
 					selection.is_dragging = false;
 					selection.last_box = None;
