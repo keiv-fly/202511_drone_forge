@@ -48,9 +48,10 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::coords::{TileBox3, TileCoord3};
-	use crate::tile::TileKind;
+use super::*;
+use crate::coords::{TileBox3, TileCoord3};
+use crate::tasks::Task;
+use crate::tile::TileKind;
 
 	#[test]
 	fn engine_executes_task() {
