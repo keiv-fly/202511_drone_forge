@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy::prelude::Camera2d;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use droneforge::*;
 use droneforge::world::World as GameWorld;
@@ -95,31 +94,26 @@ fn main() {
 		// Setup
 		.add_systems(Startup, setup_camera)
 		// Frame systems
-		.add_systems(
-			Update,
-			(
-				handle_pan_zoom,
-				handle_selection_input,
-				build_tiles_when_needed,
-				update_tile_colors_from_world,
-				tick_engine_when_running,
-				update_toast_timer,
-			),
-		)
-		.run();
+                .add_systems(
+                        Update,
+                        (
+                                handle_pan_zoom,
+                                handle_selection_input,
+                                build_tiles_when_needed,
+                                update_tile_colors_from_world,
+                                tick_engine_when_running,
+                                update_toast_timer,
+                                draw_ui,
+                        ),
+                )
+                .run();
 }
 
 // ---------- Setup ----------
 fn setup_camera(mut commands: Commands) {
-	let center_x = (WORLD_WIDTH as f32) * TILE_SIZE * 0.5;
-	let center_y = (WORLD_HEIGHT as f32) * TILE_SIZE * 0.5;
-	commands.spawn((
-		Camera::default(),
-		Camera2d,
-		Projection::Orthographic(OrthographicProjection::default_2d()),
-		Transform::from_translation(Vec3::new(center_x, center_y, 0.0)),
-		GlobalTransform::default(),
-	));
+        let center_x = (WORLD_WIDTH as f32) * TILE_SIZE * 0.5;
+        let center_y = (WORLD_HEIGHT as f32) * TILE_SIZE * 0.5;
+        commands.spawn((Camera2d, Transform::from_translation(Vec3::new(center_x, center_y, 0.0))));
 }
 
 // ---------- Utilities ----------
@@ -173,17 +167,18 @@ fn build_tiles_when_needed(
 				y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
 				0.0,
 			);
-			let _id = commands.spawn((
-				Sprite {
-					color,
-					custom_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-					..Default::default()
-				},
-				Transform::from_translation(pos),
-				GlobalTransform::default(),
-				TilePos { x, y, z },
-				TilesLayer,
-			)).id();
+                        let _id = commands
+                                .spawn((
+                                        Sprite {
+                                                color,
+                                                custom_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+                                                ..Default::default()
+                                        },
+                                        Transform::from_translation(pos),
+                                        TilePos { x, y, z },
+                                        TilesLayer,
+                                ))
+                                .id();
 		}
 	}
 	// Done
@@ -282,27 +277,29 @@ fn handle_selection_input(
 		for e in &mut q_overlay {
 			commands.entity(e).despawn();
 		}
-		let id = commands.spawn(( 
-			Sprite {
-				color: Color::srgba(0.2, 0.6, 1.0, 0.15),
-				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
-				..Default::default()
-			},
-			Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
-			GlobalTransform::default(),
-			SelectionOverlay,
-		)).id();
-		let _border = commands.spawn(( 
-			Sprite {
-				color: Color::srgba(0.2, 0.6, 1.0, 0.45),
-				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
-				..Default::default()
-			},
-			Transform::from_translation(Vec3::new(center.x, center.y, 11.0)),
-			GlobalTransform::default(),
-			SelectionOverlay,
-		)).id();
-		let _ = (id, _border);
+                let id = commands
+                        .spawn((
+                                Sprite {
+                                        color: Color::srgba(0.2, 0.6, 1.0, 0.15),
+                                        custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+                                        ..Default::default()
+                                },
+                                Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
+                                SelectionOverlay,
+                        ))
+                        .id();
+                let _border = commands
+                        .spawn((
+                                Sprite {
+                                        color: Color::srgba(0.2, 0.6, 1.0, 0.45),
+                                        custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+                                        ..Default::default()
+                                },
+                                Transform::from_translation(Vec3::new(center.x, center.y, 11.0)),
+                                SelectionOverlay,
+                        ))
+                        .id();
+                let _ = (id, _border);
 	}
 
 	if selection.is_dragging && mouse_buttons.just_released(MouseButton::Left) {
