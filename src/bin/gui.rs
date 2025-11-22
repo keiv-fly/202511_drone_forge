@@ -158,29 +158,27 @@ fn build_tiles_when_needed(
 	}
 	// Build current z layer tiles
 	let z = ui.current_z;
-	for y in 0..engine.engine.world.height() {
-		for x in 0..engine.engine.world.width() {
-			let k = engine.engine.world.get_tile(TileCoord3 { x, y, z }).unwrap_or(TileKind::Air);
-			let color = tile_color_for_kind(k);
-			let pos = Vec3::new(
-				x as f32 * TILE_SIZE + TILE_SIZE * 0.5,
-				y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
-				0.0,
-			);
+        for y in 0..engine.engine.world.height() {
+                for x in 0..engine.engine.world.width() {
+                        let k = engine.engine.world.get_tile(TileCoord3 { x, y, z }).unwrap_or(TileKind::Air);
+                        let color = tile_color_for_kind(k);
+                        let pos = Vec3::new(
+                                x as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+                                y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+                                0.0,
+                        );
                         let _id = commands
                                 .spawn((
-                                        Sprite {
-                                                color,
-                                                custom_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                                ..Default::default()
-                                        },
+                                        Sprite::from_color(color, Vec2::new(TILE_SIZE, TILE_SIZE)),
                                         Transform::from_translation(pos),
+                                        Visibility::Visible,
+                                        ViewVisibility::HIDDEN,
                                         TilePos { x, y, z },
                                         TilesLayer,
                                 ))
                                 .id();
-		}
-	}
+                }
+        }
 	// Done
 	ui.request_rebuild_tiles = false;
 }
@@ -500,8 +498,8 @@ fn draw_ui(
 }
 
 fn dsl_ast_program_for_mine_box(b: TileBox3) -> Program {
-	use serde_json::json;
-	let program_json = json!({
+        use serde_json::json;
+        let program_json = json!({
 		"version": 1,
 		"node": "Program",
 		"statements": [
@@ -524,8 +522,100 @@ fn dsl_ast_program_for_mine_box(b: TileBox3) -> Program {
 				}
 			}
 		]
-	});
-	serde_json::from_value(program_json).expect("valid program json")
+        });
+        serde_json::from_value(program_json).expect("valid program json")
+}
+
+#[cfg(test)]
+mod tests {
+        use super::*;
+        use bevy::prelude::{MinimalPlugins, TransformPlugin, Visibility, ViewVisibility};
+
+        #[test]
+        fn map_with_iron_and_stone_is_visible() {
+                let mut app = App::new();
+
+                app.add_plugins((MinimalPlugins, TransformPlugin));
+
+                let mut world = GameWorld::new(2, 1, 1, TileKind::Stone);
+                world.set_tile(TileCoord3 { x: 1, y: 0, z: 0 }, TileKind::Iron);
+
+                app.insert_resource(GameEngine { engine: Engine::new(world, vec![Drone::new(1)]) });
+                app.insert_resource(UiState {
+                        console_input: String::new(),
+                        console_log: vec!["test".to_string()],
+                        focus_console: false,
+                        paused: false,
+                        current_z: INITIAL_Z_LEVEL,
+                        request_rebuild_tiles: true,
+                        current_tool: Tool::Select,
+                        toast: None,
+                        core_hp: (100, 100),
+                });
+
+                app.add_systems(Startup, (setup_camera, build_tiles_when_needed));
+
+                app.update();
+                for _ in 0..3 {
+                        app.update();
+                }
+
+                assert_tilemap_visible(app.world_mut());
+        }
+
+        fn assert_tilemap_visible(world: &mut bevy::prelude::World) {
+                let mut tile_query = world.query::<(
+                        &TilePos,
+                        &GlobalTransform,
+                        Option<&Visibility>,
+                        Option<&ViewVisibility>,
+                )>();
+
+                let camera_transform = camera_transform(world);
+
+                let mut view_query = world.query_filtered::<(&GlobalTransform, &mut ViewVisibility), With<TilesLayer>>();
+                for (transform, mut view_visibility) in view_query.iter_mut(world) {
+                        if is_in_front_of_camera(transform, &camera_transform) {
+                                view_visibility.set();
+                        }
+                }
+
+                let mut tiles_count = 0;
+                let mut stone_visible = false;
+                let mut iron_visible = false;
+
+                for (pos, transform, visibility, view_visibility) in tile_query.iter(world) {
+                        tiles_count += 1;
+                        let visibility_ok = visibility
+                                .map(|v| matches!(v, Visibility::Inherited | Visibility::Visible))
+                                .unwrap_or(true);
+                        let view_vis_ok = view_visibility.map(|vv| vv.get()).unwrap_or(false);
+                        let in_front = is_in_front_of_camera(transform, &camera_transform);
+
+                        if visibility_ok && view_vis_ok && in_front {
+                                match (pos.x, pos.y) {
+                                        (0, 0) => stone_visible = true,
+                                        (1, 0) => iron_visible = true,
+                                        _ => (),
+                                }
+                        }
+                }
+
+                assert!(tiles_count >= 2, "Expected at least two tiles to be spawned");
+                assert!(stone_visible, "Stone tile is not visible to the camera");
+                assert!(iron_visible, "Iron tile is not visible to the camera");
+        }
+
+        fn camera_transform(world: &mut bevy::prelude::World) -> GlobalTransform {
+                let mut cam_query = world.query_filtered::<&GlobalTransform, With<Camera>>();
+                *cam_query.single(world).expect("Main camera exists")
+        }
+
+        fn is_in_front_of_camera(tile: &GlobalTransform, camera: &GlobalTransform) -> bool {
+                let tile_z = tile.translation().z;
+                let cam_z = camera.translation().z;
+                tile_z < cam_z
+        }
 }
 
 
