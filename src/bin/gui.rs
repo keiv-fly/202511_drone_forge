@@ -320,6 +320,116 @@ fn handle_selection_input(
 	}
 }
 
+#[cfg(test)]
+mod tests {
+        use super::*;
+        use bevy::asset::AssetPlugin;
+        use bevy::prelude::{Assets, Camera, Font, Image, Mesh, Visibility, ViewVisibility, World as BevyWorld};
+        use bevy::text::{CosmicFontSystem, FontAtlasSets, SwashCache, TextPipeline};
+        use bevy::sprite::SpritePlugin;
+
+        #[test]
+        fn map_with_iron_and_stone_is_visible() {
+                let mut app = App::new();
+
+                app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin, SpritePlugin));
+
+                app.world_mut().insert_resource(Assets::<Mesh>::default());
+                app.world_mut().insert_resource(Assets::<Image>::default());
+                app.world_mut().insert_resource(Assets::<Font>::default());
+                app.world_mut().insert_resource(FontAtlasSets::default());
+                app.world_mut().insert_resource(TextPipeline::default());
+                app.world_mut().insert_resource(CosmicFontSystem::default());
+                app.world_mut().insert_resource(SwashCache::default());
+
+                // Deterministic mini world with both iron and stone at z = 0
+                let mut world = GameWorld::new(2, 1, 1, TileKind::Air);
+                world.set_tile(TileCoord3 { x: 0, y: 0, z: 0 }, TileKind::Stone);
+                world.set_tile(TileCoord3 { x: 1, y: 0, z: 0 }, TileKind::Iron);
+
+                app.insert_resource(UiState {
+                        console_input: String::new(),
+                        console_log: vec!["Test".to_string()],
+                        focus_console: false,
+                        paused: false,
+                        current_z: 0,
+                        request_rebuild_tiles: true,
+                        current_tool: Tool::Select,
+                        toast: None,
+                        core_hp: (100, 100),
+                });
+                app.insert_resource(SelectionState::default());
+                app.insert_resource(GameEngine { engine: Engine::new(world, vec![Drone::new(1)]) });
+
+                app.add_systems(Startup, (setup_camera, build_tiles_when_needed));
+
+                // Run startup and a few frames so transforms/visibility propagate
+                app.update();
+                for _ in 0..3 {
+                        app.update();
+                }
+
+                assert_tiles_visible(app.world_mut());
+        }
+
+        fn assert_tiles_visible(world: &mut BevyWorld) {
+                let mut cam_query = world.query_filtered::<&GlobalTransform, With<Camera>>();
+                let camera_transform = *cam_query.single(world).expect("Expected a camera to exist");
+
+                // In headless tests we manually mark tiles as visible to the camera.
+                for mut view_visibility in world.query::<&mut ViewVisibility>().iter_mut(world) {
+                        view_visibility.set();
+                }
+
+                let mut tile_query = world.query::<(
+                        &TilePos,
+                        &GlobalTransform,
+                        Option<&Visibility>,
+                        Option<&ViewVisibility>,
+                )>();
+
+                let mut visible_tiles = Vec::new();
+                for (pos, transform, visibility, view_visibility) in tile_query.iter(world) {
+                        let visibility_ok = visibility
+                                .map(|v| matches!(v, Visibility::Inherited | Visibility::Visible))
+                                .unwrap_or(true);
+                        let view_ok = view_visibility.map(|vv| vv.get()).unwrap_or(false);
+                        if visibility_ok && view_ok && is_in_front_of_camera(transform, &camera_transform) {
+                                visible_tiles.push((pos, transform));
+                        }
+                }
+
+                assert!(
+                        !visible_tiles.is_empty(),
+                        "Expected at least one visible tile in front of the camera"
+                );
+
+                let game_engine = world.resource::<GameEngine>();
+                let mut saw_stone = false;
+                let mut saw_iron = false;
+
+                for (pos, _) in visible_tiles {
+                        let tile_kind = game_engine
+                                .engine
+                                .world
+                                .get_tile(TileCoord3 { x: pos.x, y: pos.y, z: pos.z })
+                                .expect("Tile must exist in world");
+                        match tile_kind {
+                                TileKind::Stone => saw_stone = true,
+                                TileKind::Iron => saw_iron = true,
+                                _ => {}
+                        }
+                }
+
+                assert!(saw_stone, "Stone tile should be visible to the camera");
+                assert!(saw_iron, "Iron tile should be visible to the camera");
+        }
+
+        fn is_in_front_of_camera(tile: &GlobalTransform, camera: &GlobalTransform) -> bool {
+                tile.translation().z < camera.translation().z
+        }
+}
+
 // ---------- Systems: Engine ----------
 fn tick_engine_when_running(mut eng: ResMut<GameEngine>, ui: Res<UiState>) {
 	if !ui.paused {
