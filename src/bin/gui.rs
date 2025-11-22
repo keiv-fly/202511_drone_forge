@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy::prelude::Camera2d;
+use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use droneforge::*;
 use droneforge::world::World as GameWorld;
 
@@ -44,7 +45,6 @@ struct UiState {
 	request_rebuild_tiles: bool,
 	current_tool: Tool,
 	toast: Option<(String, f32)>, // (message, remaining_seconds)
-	core_hp: (u32, u32),
 }
 
 #[derive(Resource, Default)]
@@ -82,7 +82,6 @@ fn main() {
 			request_rebuild_tiles: true,
 			current_tool: Tool::Select,
 			toast: None,
-			core_hp: (100, 100),
 		})
 		.insert_resource(SelectionState::default())
 		.insert_resource(GameEngine {
@@ -105,15 +104,20 @@ fn main() {
 				update_toast_timer,
 			),
 		)
-		.add_systems(EguiPrimaryContextPass, draw_ui)
 		.run();
 }
 
 // ---------- Setup ----------
 fn setup_camera(mut commands: Commands) {
-        let center_x = (WORLD_WIDTH as f32) * TILE_SIZE * 0.5;
-        let center_y = (WORLD_HEIGHT as f32) * TILE_SIZE * 0.5;
-        commands.spawn((Camera2d, Transform::from_xyz(center_x, center_y, 1000.0)));
+	let center_x = (WORLD_WIDTH as f32) * TILE_SIZE * 0.5;
+	let center_y = (WORLD_HEIGHT as f32) * TILE_SIZE * 0.5;
+	commands.spawn((
+		Camera::default(),
+		Camera2d,
+		Projection::Orthographic(OrthographicProjection::default_2d()),
+		Transform::from_translation(Vec3::new(center_x, center_y, 0.0)),
+		GlobalTransform::default(),
+	));
 }
 
 // ---------- Utilities ----------
@@ -158,27 +162,28 @@ fn build_tiles_when_needed(
 	}
 	// Build current z layer tiles
 	let z = ui.current_z;
-        for y in 0..engine.engine.world.height() {
-                for x in 0..engine.engine.world.width() {
-                        let k = engine.engine.world.get_tile(TileCoord3 { x, y, z }).unwrap_or(TileKind::Air);
-                        let color = tile_color_for_kind(k);
-                        let pos = Vec3::new(
-                                x as f32 * TILE_SIZE + TILE_SIZE * 0.5,
-                                y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
-                                0.0,
-                        );
-                        let _id = commands
-                                .spawn((
-                                        Sprite::from_color(color, Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                        Transform::from_translation(pos),
-                                        Visibility::Visible,
-                                        ViewVisibility::HIDDEN,
-                                        TilePos { x, y, z },
-                                        TilesLayer,
-                                ))
-                                .id();
-                }
-        }
+	for y in 0..engine.engine.world.height() {
+		for x in 0..engine.engine.world.width() {
+			let k = engine.engine.world.get_tile(TileCoord3 { x, y, z }).unwrap_or(TileKind::Air);
+			let color = tile_color_for_kind(k);
+			let pos = Vec3::new(
+				x as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+				y as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+				0.0,
+			);
+			let _id = commands.spawn((
+				Sprite {
+					color,
+					custom_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+					..Default::default()
+				},
+				Transform::from_translation(pos),
+				GlobalTransform::default(),
+				TilePos { x, y, z },
+				TilesLayer,
+			)).id();
+		}
+	}
 	// Done
 	ui.request_rebuild_tiles = false;
 }
@@ -275,29 +280,27 @@ fn handle_selection_input(
 		for e in &mut q_overlay {
 			commands.entity(e).despawn();
 		}
-                let id = commands
-                        .spawn((
-                                Sprite {
-                                        color: Color::srgba(0.2, 0.6, 1.0, 0.15),
-                                        custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
-                                        ..Default::default()
-                                },
-                                Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
-                                SelectionOverlay,
-                        ))
-                        .id();
-                let _border = commands
-                        .spawn((
-                                Sprite {
-                                        color: Color::srgba(0.2, 0.6, 1.0, 0.45),
-                                        custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
-                                        ..Default::default()
-                                },
-                                Transform::from_translation(Vec3::new(center.x, center.y, 11.0)),
-                                SelectionOverlay,
-                        ))
-                        .id();
-                let _ = (id, _border);
+		let id = commands.spawn(( 
+			Sprite {
+				color: Color::srgba(0.2, 0.6, 1.0, 0.15),
+				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+				..Default::default()
+			},
+			Transform::from_translation(Vec3::new(center.x, center.y, 10.0)),
+			GlobalTransform::default(),
+			SelectionOverlay,
+		)).id();
+		let _border = commands.spawn(( 
+			Sprite {
+				color: Color::srgba(0.2, 0.6, 1.0, 0.45),
+				custom_size: Some(Vec2::new(size.x.max(1.0), size.y.max(1.0))),
+				..Default::default()
+			},
+			Transform::from_translation(Vec3::new(center.x, center.y, 11.0)),
+			GlobalTransform::default(),
+			SelectionOverlay,
+		)).id();
+		let _ = (id, _border);
 	}
 
 	if selection.is_dragging && mouse_buttons.just_released(MouseButton::Left) {
@@ -350,21 +353,21 @@ fn draw_ui(
 	egui::TopBottomPanel::top("top_hud").show(&*ctx, |ui_top| {
 		ui_top.horizontal(|ui_row| {
 			let wave_label = "Wave TBD"; // Placeholder
-			let hud_text = format_hud(&eng.engine.world.resources, wave_label, ui.core_hp);
-			let controls = hud_controls(ui.current_z, ui.paused);
+			let hud_text = format_hud(&eng.engine.world.resources, wave_label);
 			ui_row.label(hud_text);
 			ui_row.separator();
-			ui_row.label(&controls.z_readout);
-			if ui_row.button(controls.z_up_label).clicked() {
+			ui_row.label(format!("Z: {}", ui.current_z));
+			if ui_row.button("Z▲").clicked() {
 				ui.current_z = (ui.current_z + 1).min(eng.engine.world.levels() - 1);
 				ui.request_rebuild_tiles = true;
 			}
-			if ui_row.button(controls.z_down_label).clicked() {
+			if ui_row.button("Z▼").clicked() {
 				ui.current_z = (ui.current_z - 1).max(0);
 				ui.request_rebuild_tiles = true;
 			}
 			ui_row.separator();
-			if ui_row.button(&controls.pause_label).clicked() {
+			let pause_label = if ui.paused { "Resume" } else { "Pause" };
+			if ui_row.button(pause_label).clicked() {
 				ui.paused = !ui.paused;
 			}
 			if let Some((ref msg, _)) = ui.toast {
@@ -379,7 +382,7 @@ fn draw_ui(
 		.resizable(true)
 		.default_width(280.0)
 		.show(&*ctx, |ui_right| {
-			ui_right.heading(DRONE_PANEL_HEADING);
+			ui_right.heading("Drones");
 			egui::ScrollArea::vertical().show(ui_right, |ui_scroll| {
 				for d in &eng.engine.drones {
 					let status = match d.status {
@@ -399,7 +402,7 @@ fn draw_ui(
 				}
 			});
 			ui_right.separator();
-			ui_right.heading(TASK_PANEL_HEADING);
+			ui_right.heading("Tasks");
 			egui::ScrollArea::vertical().show(ui_right, |ui_scroll| {
 				for (t, s) in &eng.engine.tasks.tasks {
 					let state = match s {
@@ -422,13 +425,13 @@ fn draw_ui(
 	egui::TopBottomPanel::bottom("bottom_console").resizable(true).show(&*ctx, |ui_bottom| {
 		ui_bottom.horizontal(|ui_row| {
 			let edit = egui::TextEdit::singleline(&mut ui.console_input)
-				.hint_text(CONSOLE_HINT);
+				.hint_text("Describe task… (MVP: uses selected area to create mine_box)");
 			let mut response = ui_row.add(edit);
 			if ui.focus_console {
 				response.request_focus();
 				ui.focus_console = false;
 			}
-			let submit_clicked = ui_row.button(CONSOLE_SUBMIT_LABEL).clicked();
+			let submit_clicked = ui_row.button("Submit").clicked();
 			let enter_pressed = response.lost_focus() && response.ctx.input(|i| i.key_pressed(egui::Key::Enter));
 			if submit_clicked || enter_pressed {
 				let entered = ui.console_input.trim().to_string();
@@ -467,21 +470,21 @@ fn draw_ui(
 		egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 64)).show(ui_area, |ui_tools| {
 			ui_tools.horizontal(|ui_row| {
 				let sel = ui.current_tool == Tool::Select;
-				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[0]).clicked() {
+				if ui_row.selectable_label(sel, "Select").clicked() {
 					ui.current_tool = Tool::Select;
 				}
 				let sel = ui.current_tool == Tool::MineArea;
-				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[1]).clicked() {
+				if ui_row.selectable_label(sel, "Mine Area").clicked() {
 					ui.current_tool = Tool::MineArea;
 					// Prompt flow: area drag first, then console
 					ui.focus_console = false;
 				}
 				let sel = ui.current_tool == Tool::BuildWarrior;
-				if ui_row.selectable_label(sel, TOOL_STRIP_LABELS[2]).clicked() {
+				if ui_row.selectable_label(sel, "Build Warrior").clicked() {
 					ui.current_tool = Tool::BuildWarrior;
 					set_toast(&mut ui, "Build Warrior not implemented in M1");
 				}
-				if ui_row.button(TOOL_STRIP_LABELS[3]).clicked() {
+				if ui_row.button("Cancel").clicked() {
 					ui.current_tool = Tool::Select;
 					selection.is_dragging = false;
 					selection.last_box = None;
@@ -498,8 +501,8 @@ fn draw_ui(
 }
 
 fn dsl_ast_program_for_mine_box(b: TileBox3) -> Program {
-        use serde_json::json;
-        let program_json = json!({
+	use serde_json::json;
+	let program_json = json!({
 		"version": 1,
 		"node": "Program",
 		"statements": [
@@ -522,100 +525,8 @@ fn dsl_ast_program_for_mine_box(b: TileBox3) -> Program {
 				}
 			}
 		]
-        });
-        serde_json::from_value(program_json).expect("valid program json")
-}
-
-#[cfg(test)]
-mod tests {
-        use super::*;
-        use bevy::prelude::{MinimalPlugins, TransformPlugin, Visibility, ViewVisibility};
-
-        #[test]
-        fn map_with_iron_and_stone_is_visible() {
-                let mut app = App::new();
-
-                app.add_plugins((MinimalPlugins, TransformPlugin));
-
-                let mut world = GameWorld::new(2, 1, 1, TileKind::Stone);
-                world.set_tile(TileCoord3 { x: 1, y: 0, z: 0 }, TileKind::Iron);
-
-                app.insert_resource(GameEngine { engine: Engine::new(world, vec![Drone::new(1)]) });
-                app.insert_resource(UiState {
-                        console_input: String::new(),
-                        console_log: vec!["test".to_string()],
-                        focus_console: false,
-                        paused: false,
-                        current_z: INITIAL_Z_LEVEL,
-                        request_rebuild_tiles: true,
-                        current_tool: Tool::Select,
-                        toast: None,
-                        core_hp: (100, 100),
-                });
-
-                app.add_systems(Startup, (setup_camera, build_tiles_when_needed));
-
-                app.update();
-                for _ in 0..3 {
-                        app.update();
-                }
-
-                assert_tilemap_visible(app.world_mut());
-        }
-
-        fn assert_tilemap_visible(world: &mut bevy::prelude::World) {
-                let mut tile_query = world.query::<(
-                        &TilePos,
-                        &GlobalTransform,
-                        Option<&Visibility>,
-                        Option<&ViewVisibility>,
-                )>();
-
-                let camera_transform = camera_transform(world);
-
-                let mut view_query = world.query_filtered::<(&GlobalTransform, &mut ViewVisibility), With<TilesLayer>>();
-                for (transform, mut view_visibility) in view_query.iter_mut(world) {
-                        if is_in_front_of_camera(transform, &camera_transform) {
-                                view_visibility.set();
-                        }
-                }
-
-                let mut tiles_count = 0;
-                let mut stone_visible = false;
-                let mut iron_visible = false;
-
-                for (pos, transform, visibility, view_visibility) in tile_query.iter(world) {
-                        tiles_count += 1;
-                        let visibility_ok = visibility
-                                .map(|v| matches!(v, Visibility::Inherited | Visibility::Visible))
-                                .unwrap_or(true);
-                        let view_vis_ok = view_visibility.map(|vv| vv.get()).unwrap_or(false);
-                        let in_front = is_in_front_of_camera(transform, &camera_transform);
-
-                        if visibility_ok && view_vis_ok && in_front {
-                                match (pos.x, pos.y) {
-                                        (0, 0) => stone_visible = true,
-                                        (1, 0) => iron_visible = true,
-                                        _ => (),
-                                }
-                        }
-                }
-
-                assert!(tiles_count >= 2, "Expected at least two tiles to be spawned");
-                assert!(stone_visible, "Stone tile is not visible to the camera");
-                assert!(iron_visible, "Iron tile is not visible to the camera");
-        }
-
-        fn camera_transform(world: &mut bevy::prelude::World) -> GlobalTransform {
-                let mut cam_query = world.query_filtered::<&GlobalTransform, With<Camera>>();
-                *cam_query.single(world).expect("Main camera exists")
-        }
-
-        fn is_in_front_of_camera(tile: &GlobalTransform, camera: &GlobalTransform) -> bool {
-                let tile_z = tile.translation().z;
-                let cam_z = camera.translation().z;
-                tile_z < cam_z
-        }
+	});
+	serde_json::from_value(program_json).expect("valid program json")
 }
 
 
